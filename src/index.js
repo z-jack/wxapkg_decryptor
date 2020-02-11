@@ -206,80 +206,6 @@ if (useReference) {
   fileList.unshift(...referencesList);
 }
 
-// Try detect possible image assets
-const unindexedList = [];
-if (detectIndexed) {
-  const residualBuffer = xorBuffer.slice(dataOffset, fileList[0].offset + 1);
-  const isConflict = x =>
-    unindexedList.find(
-      o => o.offset - dataOffset < x && o.offset + o.size - dataOffset > x
-    );
-  const findFilesInBuffer = (headerMark, endMark, extension) => {
-    if (
-      !(headerMark instanceof Buffer) ||
-      !(endMark instanceof Buffer) ||
-      typeof extension !== "string"
-    )
-      return 0;
-    let counter = 0;
-    let pointer = residualBuffer.indexOf(headerMark);
-    while (pointer >= 0) {
-      if (isConflict(pointer)) {
-        pointer = residualBuffer.indexOf(
-          headerMark,
-          pointer + headerMark.length
-        );
-      }
-      let endIndex = residualBuffer.indexOf(endMark, pointer);
-      if (endIndex < 0) break;
-      unindexedList.push({
-        name: `/${++counter}.${extension}`,
-        offset: dataOffset + pointer - 1,
-        size: endIndex - pointer + endMark.length
-      });
-      pointer = residualBuffer.indexOf(headerMark, endIndex);
-    }
-    return counter;
-  };
-  // PNG file detector
-  const pngHeaderMark = Buffer.from("\x89PNG\x0d\x0a\x1a\x0a", "ascii");
-  const pngEndMark = Buffer.from("IEND\xae\x42\x60\x82", "ascii");
-  const pngCounter = findFilesInBuffer(pngHeaderMark, pngEndMark, "png");
-  // JPG file detector
-  const jpgHeaderMark = Buffer.from("\xff\xd8", "ascii");
-  const jpgEndMark = Buffer.from("\xff\xd9", "ascii");
-  const jpgCounter = findFilesInBuffer(jpgHeaderMark, jpgEndMark, "jpg");
-  // TODO: detect more image formats
-  // Print detected file list
-  if (pngCounter > 0 || jpgCounter > 0) {
-    console.log(
-      `- Find ${pngCounter} un-indexed PNG file(s) and ${jpgCounter} un-indexed JPG file(s).`
-    );
-    console.log(
-      `  > ${"temp file name".padEnd(50, " ")}\t${"offset".padEnd(
-        10,
-        " "
-      )}\tsize\n  ${"".padStart(80, "=")}`
-    );
-    for (let config of unindexedList) {
-      console.log(
-        `  * ${config.name.padEnd(50, " ")}\t${formatHex(
-          config.offset
-        )}\t${formatHex(config.size)}`
-      );
-      let scopedName = "./unindexed" + config.name;
-      try {
-        fs.mkdirSync(path.dirname(scopedName), { recursive: true });
-      } catch (e) {}
-      // Due to the first byte is XOR key, therefore the actual offset is add by 1
-      fs.writeFileSync(
-        scopedName,
-        xorBuffer.slice(config.offset + 1, config.offset + config.size + 1)
-      );
-    }
-  }
-}
-
 // Print un-indexed data range
 const unknownIndexLength =
   dataOffset -
@@ -304,6 +230,83 @@ if (unknownIndexLength > 0) {
       "- Missing empty file index, will automatically create an arbitrary index"
     );
   } else {
+    // Try detect possible image assets
+    const unindexedList = [];
+    if (detectIndexed) {
+      let pngCounter = 0,
+        jpgCounter = 0;
+      for (let range of missingRange) {
+        const residualBuffer = xorBuffer.slice(range[0], range[1] + 1);
+        const isConflict = x =>
+          unindexedList.find(
+            o => o.offset - dataOffset < x && o.offset + o.size - dataOffset > x
+          );
+        const findFilesInBuffer = (headerMark, endMark, extension) => {
+          if (
+            !(headerMark instanceof Buffer) ||
+            !(endMark instanceof Buffer) ||
+            typeof extension !== "string"
+          )
+            return 0;
+          let counter = 0;
+          let pointer = residualBuffer.indexOf(headerMark);
+          while (pointer >= 0) {
+            if (isConflict(pointer)) {
+              pointer = residualBuffer.indexOf(
+                headerMark,
+                pointer + headerMark.length
+              );
+            }
+            let endIndex = residualBuffer.indexOf(endMark, pointer);
+            if (endIndex < 0) break;
+            unindexedList.push({
+              name: `/${++counter}.${extension}`,
+              offset: dataOffset + pointer - 1,
+              size: endIndex - pointer + endMark.length
+            });
+            pointer = residualBuffer.indexOf(headerMark, endIndex);
+          }
+          return counter;
+        };
+        // PNG file detector
+        const pngHeaderMark = Buffer.from("\x89PNG\x0d\x0a\x1a\x0a", "ascii");
+        const pngEndMark = Buffer.from("IEND\xae\x42\x60\x82", "ascii");
+        pngCounter += findFilesInBuffer(pngHeaderMark, pngEndMark, "png");
+        // JPG file detector
+        const jpgHeaderMark = Buffer.from("\xff\xd8", "ascii");
+        const jpgEndMark = Buffer.from("\xff\xd9", "ascii");
+        jpgCounter += findFilesInBuffer(jpgHeaderMark, jpgEndMark, "jpg");
+        // TODO: detect more file formats
+      }
+      // Print detected file list
+      if (pngCounter > 0 || jpgCounter > 0) {
+        console.log(
+          `- Find ${pngCounter} un-indexed PNG file(s) and ${jpgCounter} un-indexed JPG file(s).`
+        );
+        console.log(
+          `  > ${"temp file name".padEnd(50, " ")}\t${"offset".padEnd(
+            10,
+            " "
+          )}\tsize\n  ${"".padStart(80, "=")}`
+        );
+        for (let config of unindexedList) {
+          console.log(
+            `  * ${config.name.padEnd(50, " ")}\t${formatHex(
+              config.offset
+            )}\t${formatHex(config.size)}`
+          );
+          let scopedName = "./unindexed" + config.name;
+          try {
+            fs.mkdirSync(path.dirname(scopedName), { recursive: true });
+          } catch (e) {}
+          // Due to the first byte is XOR key, therefore the actual offset is add by 1
+          fs.writeFileSync(
+            scopedName,
+            xorBuffer.slice(config.offset + 1, config.offset + config.size + 1)
+          );
+        }
+      }
+    }
     console.log(
       `- Missing file index ${missingRanges
         .map(r => `from ${formatHex(r[0])} to ${formatHex(r[1])}`)
@@ -350,7 +353,7 @@ for (let i = 0; i < wxapkgBuffer.length; i++) {
 const reconstructBuffer = Buffer.allocUnsafe(wxapkgBuffer.length);
 reconstructBuffer.writeUInt8(0xbe, 0); // Fixed header first byte
 reconstructBuffer.writeUInt32BE(0x00000000, 1); // Edition
-reconstructBuffer.writeUInt32BE(dataOffset - indexOffset, 5); // Index info length
+reconstructBuffer.writeUInt32BE(dataOffset - indexOffset + 4, 5); // Index info length
 reconstructBuffer.writeUInt32BE(xorBuffer.length - dataOffset, 9); // Body info length
 reconstructBuffer.writeUInt8(0xed, 13); // Fixed header last mark
 reconstructBuffer.writeUInt32BE(fileList.length, 14); // File count
