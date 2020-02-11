@@ -1,0 +1,16 @@
+{
+  "name": "xortest",
+  "version": "1.0.0",
+  "description": "try do xor decryption",
+  "main": "src/index.js",
+  "scripts": {
+    "decompile": "node src/index.js"
+  },
+  "keywords": [
+    "xor",
+    "wechat"
+  ],
+  "author": "z-jack",
+  "license": "MIT",
+  "dependencies": {}
+}
