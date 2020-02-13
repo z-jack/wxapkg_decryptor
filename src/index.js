@@ -235,7 +235,7 @@ if (unknownIndexLength > 0) {
     if (detectIndexed) {
       let pngCounter = 0,
         jpgCounter = 0;
-      for (let range of missingRange) {
+      for (let range of missingRanges) {
         const residualBuffer = xorBuffer.slice(range[0], range[1] + 1);
         const isConflict = x =>
           unindexedList.find(
