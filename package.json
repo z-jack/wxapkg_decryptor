@@ -4,7 +4,8 @@
   "description": "try do xor decryption",
   "main": "src/index.js",
   "scripts": {
-    "decompile": "node src/index.js"
+    "legacy": "node src/index.js",
+    "decompile": "node src/blackTrace.js"
   },
   "keywords": [
     "xor",
@@ -12,5 +13,7 @@
   ],
   "author": "z-jack",
   "license": "MIT",
-  "dependencies": {}
+  "dependencies": {
+    "pbkdf2": "^3.1.1"
+  }
 }

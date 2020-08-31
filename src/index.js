@@ -57,7 +57,7 @@ for (let i = startOffset; i < xorBuffer.length; ) {
   fileList.push({
     name,
     offset,
-    size
+    size,
   });
   i += length + 12;
 }
@@ -74,14 +74,14 @@ console.log(
 // Try parse un-indexed html file scopes
 for (let i = fileList[0].offset; i > dataOffset; ) {
   // Packed html files always start with "\t<style>" and end with "</script>"
-  const tailString = new TextDecoder("ascii").decode(
+  const tailString = new TextDecoder("utf-8").decode(
     xorBuffer.slice(i - 20, i)
   );
   if (!tailString.includes("</script>")) {
     break;
   }
   // Almost all packed html files are less than 1k
-  const kbString = new TextDecoder("ascii").decode(
+  const kbString = new TextDecoder("utf-8").decode(
     xorBuffer.slice(i - 1024, i)
   );
   const startIndex = kbString.lastIndexOf("\t<style>");
@@ -101,7 +101,7 @@ for (let i = fileList[0].offset; i > dataOffset; ) {
   fileList.unshift({
     name,
     offset,
-    size
+    size,
   });
   i = offset;
 }
@@ -114,7 +114,7 @@ for (let i = fileList[0].offset; i > dataOffset; ) {
     Math.max(i - 4 * 1024 * 1024, dataOffset),
     i
   );
-  const mbString = new TextDecoder("ascii").decode(mbBuffer);
+  const mbString = new TextDecoder("utf-8").decode(mbBuffer);
   let startIndex = mbString.lastIndexOf("\tvar __wxAppData");
   if (startIndex < 0) {
     break;
@@ -125,7 +125,7 @@ for (let i = fileList[0].offset; i > dataOffset; ) {
   fileList.unshift({
     name,
     offset,
-    size
+    size,
   });
   break;
 }
@@ -133,7 +133,7 @@ for (let i = fileList[0].offset; i > dataOffset; ) {
 // Try parse /app-config.json
 for (let i = fileList[0].offset; i > dataOffset; ) {
   // Packed app-config.json file always starts with '{"' and ends with "}"
-  const tailString = new TextDecoder("ascii").decode(
+  const tailString = new TextDecoder("utf-8").decode(
     xorBuffer.slice(i - 20, i)
   );
   if (!tailString.includes("}")) {
@@ -141,7 +141,7 @@ for (let i = fileList[0].offset; i > dataOffset; ) {
   }
   // Assume app-config.json file is less than 1M
   const mbBuffer = xorBuffer.slice(Math.max(i - 1024 * 1024, dataOffset), i);
-  const mbString = new TextDecoder("ascii").decode(mbBuffer);
+  const mbString = new TextDecoder("utf-8").decode(mbBuffer);
   const startIndex = mbString.indexOf('{"');
   if (startIndex < 0) {
     break;
@@ -152,7 +152,7 @@ for (let i = fileList[0].offset; i > dataOffset; ) {
   fileList.unshift({
     name,
     offset,
-    size
+    size,
   });
   i = offset;
   break;
@@ -161,25 +161,25 @@ for (let i = fileList[0].offset; i > dataOffset; ) {
 // Try parse un-indexed assets based on given references
 if (useReference) {
   // Recursively get file list, thanks to https://stackoverflow.com/a/47492545
-  const isDirectory = path => fs.statSync(path).isDirectory();
-  const getDirectories = p =>
+  const isDirectory = (path) => fs.statSync(path).isDirectory();
+  const getDirectories = (p) =>
     fs
       .readdirSync(p)
-      .map(name => path.posix.join(p, name))
+      .map((name) => path.posix.join(p, name))
       .filter(isDirectory);
 
-  const isFile = path =>
+  const isFile = (path) =>
     fs.statSync(path).isFile() && !path.endsWith(".gitkeep");
-  const getFiles = p =>
+  const getFiles = (p) =>
     fs
       .readdirSync(p)
-      .map(name => path.posix.join(p, name))
+      .map((name) => path.posix.join(p, name))
       .filter(isFile);
 
-  const getFilesRecursively = path => {
+  const getFilesRecursively = (path) => {
     let dirs = getDirectories(path);
     let files = dirs
-      .map(dir => getFilesRecursively(dir))
+      .map((dir) => getFilesRecursively(dir))
       .reduce((a, b) => a.concat(b), []);
     return files.concat(getFiles(path));
   };
@@ -187,9 +187,9 @@ if (useReference) {
   const residualBuffer = xorBuffer.slice(dataOffset, fileList[0].offset + 1);
   const referencesList = getFilesRecursively("references")
     .map(
-      p => p.slice(10) // ignore prefix
+      (p) => p.slice(10) // ignore prefix
     )
-    .map(p => {
+    .map((p) => {
       const referenceContent = fs.readFileSync("./references" + p);
       const referenceIndex = residualBuffer.indexOf(referenceContent);
       if (referenceIndex < 0) {
@@ -198,34 +198,40 @@ if (useReference) {
       return {
         name: p,
         offset: dataOffset + referenceIndex - 1,
-        size: referenceContent.length
+        size: referenceContent.length,
       };
     })
-    .filter(x => x)
+    .filter((x) => x)
     .sort((a, b) => a.offset - b.offset);
   fileList.unshift(...referencesList);
 }
 
 // Print un-indexed data range
-const unknownIndexLength =
+let unknownIndexLength =
   dataOffset -
-  fileList.map(config => config.name.length + 12).reduce((p, v) => p + v, 0) -
+  fileList.map((config) => config.name.length + 12).reduce((p, v) => p + v, 0) -
   indexOffset;
 if (unknownIndexLength > 0) {
   const missingRanges = [];
   let lastOffset = dataOffset;
-  fileList.forEach(config => {
+  fileList.forEach((config) => {
     if (config.offset > lastOffset) {
       missingRanges.push([lastOffset, config.offset]);
     }
     lastOffset = config.offset + config.size;
   });
   if (missingRanges.length === 0 && unknownIndexLength > 13) {
-    fileList.unshift({
-      name: "/".padEnd(unknownIndexLength - 12, "0"),
-      offset: dataOffset - 1,
-      size: 0
-    });
+    let counter = 0;
+    while (unknownIndexLength > 13) {
+      const length = Math.min(unknownIndexLength - 12, 63);
+      unknownIndexLength -= length + 12;
+      fileList.unshift({
+        name: "/".padEnd(length, counter.toString(16)),
+        offset: dataOffset - 1,
+        size: 0,
+      });
+      counter += 1;
+    }
     console.log(
       "- Missing empty file index, will automatically create an arbitrary index"
     );
@@ -234,12 +240,23 @@ if (unknownIndexLength > 0) {
     const unindexedList = [];
     if (detectIndexed) {
       let pngCounter = 0,
-        jpgCounter = 0;
+        jpgCounter = 0,
+        jsonCounter = 0;
       for (let range of missingRanges) {
         const residualBuffer = xorBuffer.slice(range[0], range[1] + 1);
-        const isConflict = x =>
+
+        try {
+          fs.mkdirSync("./unindexed");
+        } catch (e) {}
+        fs.writeFileSync(
+          `./unindexed/${range[0]}-${range[1]}.bin`,
+          residualBuffer
+        );
+
+        const isConflict = (x) =>
           unindexedList.find(
-            o => o.offset - dataOffset < x && o.offset + o.size - dataOffset > x
+            (o) =>
+              o.offset - dataOffset < x && o.offset + o.size - dataOffset > x
           );
         const findFilesInBuffer = (headerMark, endMark, extension) => {
           if (
@@ -261,10 +278,44 @@ if (unknownIndexLength > 0) {
             if (endIndex < 0) break;
             unindexedList.push({
               name: `/${++counter}.${extension}`,
-              offset: dataOffset + pointer - 1,
-              size: endIndex - pointer + endMark.length
+              offset: range[0] + pointer - 1,
+              size: endIndex - pointer + endMark.length,
             });
             pointer = residualBuffer.indexOf(headerMark, endIndex);
+          }
+          return counter;
+        };
+        const findJSONObjectInBuffer = () => {
+          const headerMark = Buffer.from('{"', "ascii");
+          const endMark = Buffer.from("}", "ascii");
+          let counter = 0;
+          let pointer = residualBuffer.indexOf(headerMark);
+          outer: while (pointer >= 0) {
+            if (isConflict(pointer)) {
+              pointer = residualBuffer.indexOf(
+                headerMark,
+                pointer + headerMark.length
+              );
+            }
+            if (pointer < 0) break;
+            let endIndex = residualBuffer.indexOf(endMark, pointer);
+            while (endIndex >= 0) {
+              try {
+                JSON.parse(
+                  residualBuffer.slice(pointer, endIndex + 1).toString("utf-8")
+                );
+                unindexedList.push({
+                  name: `/${++counter}.json`,
+                  offset: range[0] + pointer - 1,
+                  size: endIndex - pointer + endMark.length,
+                });
+                pointer = residualBuffer.indexOf(headerMark, endIndex);
+                continue outer;
+              } catch (e) {
+                endIndex = residualBuffer.indexOf(endMark, endIndex + 1);
+              }
+            }
+            pointer = residualBuffer.indexOf(headerMark, pointer + 1);
           }
           return counter;
         };
@@ -276,12 +327,14 @@ if (unknownIndexLength > 0) {
         const jpgHeaderMark = Buffer.from("\xff\xd8", "ascii");
         const jpgEndMark = Buffer.from("\xff\xd9", "ascii");
         jpgCounter += findFilesInBuffer(jpgHeaderMark, jpgEndMark, "jpg");
+        // JSON file detector
+        jsonCounter += findJSONObjectInBuffer();
         // TODO: detect more file formats
       }
       // Print detected file list
-      if (pngCounter > 0 || jpgCounter > 0) {
+      if (pngCounter > 0 || jpgCounter > 0 || jsonCounter > 0) {
         console.log(
-          `- Find ${pngCounter} un-indexed PNG file(s) and ${jpgCounter} un-indexed JPG file(s).`
+          `- Find un-indexed: ${pngCounter} PNG, ${jpgCounter} JPG, ${jsonCounter} JSON.`
         );
         console.log(
           `  > ${"temp file name".padEnd(50, " ")}\t${"offset".padEnd(
@@ -309,7 +362,7 @@ if (unknownIndexLength > 0) {
     }
     console.log(
       `- Missing file index ${missingRanges
-        .map(r => `from ${formatHex(r[0])} to ${formatHex(r[1])}`)
+        .map((r) => `from ${formatHex(r[0])} to ${formatHex(r[1])}`)
         .join(", ")}, maybe ${Math.round(unknownIndexLength / 30)} file(s)`
     );
   }
