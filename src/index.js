@@ -4,23 +4,30 @@ const path = require("path");
 const formatHex = (n, d = 8) => "0x" + n.toString(16).padStart(d, "0");
 
 const fileBuffer = fs.readFileSync("__APP__.wxapkg");
+const AppName = "";
+const noHeader = true; // If start with V1MMWX
+
 const baseOffset = 0x400;
 const detectIndexed = true;
 const useReference = true;
 
 // Mini-app meta data
-let xorNumber = 0x66;
-let headerOffset = 1;
-let indexOffset = 19;
+let xorNumber = noHeader
+  ? 0
+  : AppName.length >= 2
+  ? AppName.charAt(AppName.length - 2).charCodeAt()
+  : 0x66;
+let headerOffset = noHeader ? 0 : 1;
+let indexOffset = noHeader ? 18 : 19;
 let dataOffset = 0;
 
 // Decode file
-const xorBuffer = Buffer.allocUnsafe(fileBuffer.length - 6);
-for (let i = 0; i < fileBuffer.length - 6; i++) {
+const xorBuffer = Buffer.allocUnsafe(fileBuffer.length - (noHeader ? 0 : 6));
+for (let i = 0; i < fileBuffer.length - (noHeader ? 0 : 6); i++) {
   if (i < baseOffset) {
-    xorBuffer[i] = fileBuffer[i + 6];
+    xorBuffer[i] = fileBuffer[i + (noHeader ? 0 : 6)];
   } else {
-    xorBuffer[i] = fileBuffer[i + 6] ^ xorNumber;
+    xorBuffer[i] = fileBuffer[i + (noHeader ? 0 : 6)] ^ xorNumber;
   }
 }
 
@@ -184,7 +191,7 @@ if (useReference) {
     return files.concat(getFiles(path));
   };
 
-  const residualBuffer = xorBuffer.slice(dataOffset, fileList[0].offset + 1);
+  const residualBuffer = xorBuffer.slice(dataOffset, fileList[0].offset + (noHeader ? 0 : 1));
   const referencesList = getFilesRecursively("references")
     .map(
       (p) => p.slice(10) // ignore prefix
@@ -197,7 +204,7 @@ if (useReference) {
       }
       return {
         name: p,
-        offset: dataOffset + referenceIndex - 1,
+        offset: dataOffset + referenceIndex - (noHeader ? 0 : 1),
         size: referenceContent.length,
       };
     })
@@ -241,6 +248,8 @@ if (unknownIndexLength > 0) {
     if (detectIndexed) {
       let pngCounter = 0,
         jpgCounter = 0,
+        svgCounter = 0,
+        gifCounter = 0,
         jsonCounter = 0;
       for (let range of missingRanges) {
         const residualBuffer = xorBuffer.slice(range[0], range[1] + 1);
@@ -258,14 +267,18 @@ if (unknownIndexLength > 0) {
             (o) =>
               o.offset - dataOffset < x && o.offset + o.size - dataOffset > x
           );
-        const findFilesInBuffer = (headerMark, endMark, extension) => {
+        const findFilesInBuffer = (
+          headerMark,
+          endMark,
+          extension,
+          counter = 0
+        ) => {
           if (
             !(headerMark instanceof Buffer) ||
             !(endMark instanceof Buffer) ||
             typeof extension !== "string"
           )
             return 0;
-          let counter = 0;
           let pointer = residualBuffer.indexOf(headerMark);
           while (pointer >= 0) {
             if (isConflict(pointer)) {
@@ -278,17 +291,16 @@ if (unknownIndexLength > 0) {
             if (endIndex < 0) break;
             unindexedList.push({
               name: `/${++counter}.${extension}`,
-              offset: range[0] + pointer - 1,
+              offset: range[0] + pointer - (noHeader ? 0 : 1),
               size: endIndex - pointer + endMark.length,
             });
             pointer = residualBuffer.indexOf(headerMark, endIndex);
           }
           return counter;
         };
-        const findJSONObjectInBuffer = () => {
+        const findJSONObjectInBuffer = (counter = 0) => {
           const headerMark = Buffer.from('{"', "ascii");
           const endMark = Buffer.from("}", "ascii");
-          let counter = 0;
           let pointer = residualBuffer.indexOf(headerMark);
           outer: while (pointer >= 0) {
             if (isConflict(pointer)) {
@@ -306,7 +318,7 @@ if (unknownIndexLength > 0) {
                 );
                 unindexedList.push({
                   name: `/${++counter}.json`,
-                  offset: range[0] + pointer - 1,
+                  offset: range[0] + pointer - (noHeader ? 0 : 1),
                   size: endIndex - pointer + endMark.length,
                 });
                 pointer = residualBuffer.indexOf(headerMark, endIndex);
@@ -322,31 +334,66 @@ if (unknownIndexLength > 0) {
         // PNG file detector
         const pngHeaderMark = Buffer.from("\x89PNG\x0d\x0a\x1a\x0a", "ascii");
         const pngEndMark = Buffer.from("IEND\xae\x42\x60\x82", "ascii");
-        pngCounter += findFilesInBuffer(pngHeaderMark, pngEndMark, "png");
+        pngCounter = findFilesInBuffer(
+          pngHeaderMark,
+          pngEndMark,
+          "png",
+          pngCounter
+        );
         // JPG file detector
         const jpgHeaderMark = Buffer.from("\xff\xd8", "ascii");
         const jpgEndMark = Buffer.from("\xff\xd9", "ascii");
-        jpgCounter += findFilesInBuffer(jpgHeaderMark, jpgEndMark, "jpg");
+        jpgCounter = findFilesInBuffer(
+          jpgHeaderMark,
+          jpgEndMark,
+          "jpg",
+          jpgCounter
+        );
+        // SVG file detector
+        const svgHeaderMark = Buffer.from("<svg", "ascii");
+        const svgEndMark = Buffer.from("</svg>", "ascii");
+        svgCounter = findFilesInBuffer(
+          svgHeaderMark,
+          svgEndMark,
+          "svg",
+          svgCounter
+        );
+        // GIF file detector
+        const gifHeaderMark = Buffer.from("GIF89a", "ascii");
+        const gifEndMark = Buffer.from("\x00\x3b", "ascii");
+        gifCounter = findFilesInBuffer(
+          gifHeaderMark,
+          gifEndMark,
+          "gif",
+          gifCounter
+        );
         // JSON file detector
-        jsonCounter += findJSONObjectInBuffer();
+        jsonCounter = findJSONObjectInBuffer(jsonCounter);
         // TODO: detect more file formats
       }
       // Print detected file list
-      if (pngCounter > 0 || jpgCounter > 0 || jsonCounter > 0) {
+      if (
+        pngCounter > 0 ||
+        jpgCounter > 0 ||
+        jsonCounter > 0 ||
+        svgCounter > 0
+      ) {
         console.log(
-          `- Find un-indexed: ${pngCounter} PNG, ${jpgCounter} JPG, ${jsonCounter} JSON.`
+          `- Find un-indexed: ${pngCounter} PNG, ${jpgCounter} JPG, ${svgCounter} SVG, ${jsonCounter} JSON.`
         );
         console.log(
           `  > ${"temp file name".padEnd(50, " ")}\t${"offset".padEnd(
             10,
             " "
-          )}\tsize\n  ${"".padStart(80, "=")}`
+          )}\t${"end".padEnd(10, " ")}\tsize\n  ${"".padStart(100, "=")}`
         );
         for (let config of unindexedList) {
           console.log(
             `  * ${config.name.padEnd(50, " ")}\t${formatHex(
               config.offset
-            )}\t${formatHex(config.size)}`
+            )}\t${formatHex(config.offset + config.size)}\t${formatHex(
+              config.size
+            )}`
           );
           let scopedName = "./unindexed" + config.name;
           try {
@@ -355,7 +402,10 @@ if (unknownIndexLength > 0) {
           // Due to the first byte is XOR key, therefore the actual offset is add by 1
           fs.writeFileSync(
             scopedName,
-            xorBuffer.slice(config.offset + 1, config.offset + config.size + 1)
+            xorBuffer.slice(
+              config.offset + (noHeader ? 0 : 1),
+              config.offset + config.size + (noHeader ? 0 : 1)
+            )
           );
         }
       }
@@ -374,32 +424,37 @@ console.log(
   `  > ${"file name".padEnd(50, " ")}\t${"offset".padEnd(
     10,
     " "
-  )}\tsize\n  ${"".padStart(80, "=")}`
+  )}\t${"end".padEnd(10, " ")}\tsize\n  ${"".padStart(100, "=")}`
 );
 for (let config of fileList) {
   console.log(
     `  * ${config.name.padEnd(50, " ")}\t${formatHex(
       config.offset
-    )}\t${formatHex(config.size)}`
+    )}\t${formatHex(config.offset + config.size)}\t${formatHex(config.size)}`
   );
   let scopedName = "./restored" + config.name;
   try {
     fs.mkdirSync(path.dirname(scopedName), { recursive: true });
   } catch (e) {}
   // Due to the first byte is XOR key, therefore the actual offset is add by 1
+  const content = xorBuffer.slice(
+    config.offset + (noHeader ? 0 : 1),
+    config.offset + config.size + (noHeader ? 0 : 1)
+  );
+  const isLastx00 = content[content.length - 1] === 0x00;
   fs.writeFileSync(
     scopedName,
-    xorBuffer.slice(config.offset + 1, config.offset + config.size + 1)
+    isLastx00 ? content.slice(0, content.length - 1) : content
   );
 }
 
 // Reconstruct the wxapkg
-const wxapkgBuffer = Buffer.allocUnsafe(xorBuffer.length - 1);
+const wxapkgBuffer = Buffer.allocUnsafe(xorBuffer.length - (noHeader ? 0 : 1));
 for (let i = 0; i < wxapkgBuffer.length; i++) {
-  if (i < baseOffset - 1) {
+  if (i < baseOffset) {
     wxapkgBuffer[i] = 0;
   } else {
-    wxapkgBuffer[i] = xorBuffer[i + 1];
+    wxapkgBuffer[i] = xorBuffer[i + (noHeader ? 0 : 1)];
   }
 }
 // Package structure, thanks to https://toutiao.io/posts/33fum8/preview

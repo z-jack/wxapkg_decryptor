@@ -4,6 +4,7 @@ const fs = require("fs");
 
 const fileBuffer = fs.readFileSync("__APP__.wxapkg");
 const AppName = "";
+const noHeader = true; // If start with V1MMWX
 
 const salt = "saltiest";
 const iv = Buffer.from("the iv: 16 bytes", "ascii");
@@ -14,13 +15,17 @@ const xorKey =
 // decrypt head using AES-256-CBC
 const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
 decipher.setAutoPadding(false);
-let decryptedHead = decipher.update(fileBuffer.slice(6, 0x406));
+let decryptedHead = decipher.update(
+  fileBuffer.slice(noHeader ? 0 : 6, 0x400 + (noHeader ? 0 : 6))
+);
 decryptedHead = Buffer.concat([decryptedHead, decipher.final()]);
 
 // decrypt body using XOR
-let decryptedBody = fileBuffer.slice(0x406);
-for (let i = 0; i < decryptedBody.byteLength; i++) {
-  decryptedBody[i] ^= xorKey;
+let decryptedBody = fileBuffer.slice(0x400 + (noHeader ? 0 : 6));
+if (!noHeader) {
+  for (let i = 0; i < decryptedBody.byteLength; i++) {
+    decryptedBody[i] ^= xorKey;
+  }
 }
 
 // merge and check file format
