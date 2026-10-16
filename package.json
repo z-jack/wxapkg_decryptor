@@ -14,6 +14,6 @@
   "author": "z-jack",
   "license": "MIT",
   "dependencies": {
-    "pbkdf2": "^3.1.1"
+    "pbkdf2": "^3.1.7"
   }
 }
